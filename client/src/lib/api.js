@@ -1,3 +1,4 @@
+const API = import.meta.env.VITE_API_URL ?? '';
 const NETWORK_ERROR_MESSAGE = 'Could not reach the server. Check your connection and try again.';
 
 export async function reviewAgreement(file) {
@@ -7,7 +8,7 @@ export async function reviewAgreement(file) {
   let response;
   let data;
   try {
-    response = await fetch('/api/review', {
+    response = await fetch(`${API}/api/review`, {
       method: 'POST',
       body: formData,
     });

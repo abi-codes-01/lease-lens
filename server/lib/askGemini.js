@@ -11,7 +11,7 @@ const ai = new GoogleGenAI({
 const responseJsonSchema = z.toJSONSchema(ReviewSchema);
 
 export async function askGemini(text) {
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const response = await ai.models.generateContent({
     model,
     contents: `<agreement>\n${text}\n</agreement>`,
