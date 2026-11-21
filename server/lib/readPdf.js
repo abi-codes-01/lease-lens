@@ -1,4 +1,9 @@
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+const require = createRequire(import.meta.url);
 const PAGE_MARKER_LINE = /^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm;
+let workerConfigured = false;
 
 class MinimalDOMMatrix {
   constructor(init = [1, 0, 0, 1, 0, 0]) {
@@ -14,10 +19,48 @@ class MinimalDOMMatrix {
   }
 }
 
+class MinimalPath2D {
+  addPath() {}
+  closePath() {}
+  moveTo() {}
+  lineTo() {}
+  bezierCurveTo() {}
+  quadraticCurveTo() {}
+  arc() {}
+  arcTo() {}
+  ellipse() {}
+  rect() {}
+}
+
+class MinimalImageData {
+  constructor(dataOrWidth, widthOrHeight, maybeHeight) {
+    if (typeof dataOrWidth === 'number') {
+      this.width = dataOrWidth;
+      this.height = widthOrHeight;
+      this.data = new Uint8ClampedArray(this.width * this.height * 4);
+    } else {
+      this.data = dataOrWidth;
+      this.width = widthOrHeight;
+      this.height = maybeHeight ?? Math.floor(dataOrWidth.length / (widthOrHeight * 4));
+    }
+  }
+}
+
 function ensurePdfGlobals() {
   if (typeof globalThis.DOMMatrix === 'undefined') {
     globalThis.DOMMatrix = MinimalDOMMatrix;
   }
+  if (typeof globalThis.Path2D === 'undefined') {
+    globalThis.Path2D = MinimalPath2D;
+  }
+  if (typeof globalThis.ImageData === 'undefined') {
+    globalThis.ImageData = MinimalImageData;
+  }
+}
+
+function resolvePdfWorkerUrl() {
+  const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
+  return pathToFileURL(workerPath).href;
 }
 
 function cleanPdfText(rawText) {
@@ -30,13 +73,23 @@ function cleanPdfText(rawText) {
 }
 
 export async function readPdf(buffer) {
-  ensurePdfGlobals();
-  const { PDFParse } = await import('pdf-parse');
-  const parser = new PDFParse({ data: buffer });
+  let parser;
   try {
+    ensurePdfGlobals();
+    const { PDFParse } = await import('pdf-parse');
+    if (!workerConfigured) {
+      PDFParse.setWorker(resolvePdfWorkerUrl());
+      workerConfigured = true;
+    }
+    parser = new PDFParse({ data: buffer });
     const { text } = await parser.getText();
     return cleanPdfText(text ?? '');
+  } catch (err) {
+    console.error('[PDF] read failed:', err);
+    throw new Error('This PDF could not be read. Try exporting it again.');
   } finally {
-    await parser.destroy();
+    if (parser) {
+      await parser.destroy().catch(() => {});
+    }
   }
 }
