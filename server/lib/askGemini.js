@@ -5,13 +5,12 @@ import { ReviewSchema } from './reviewSchema.js';
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: { timeout: 30_000 },
+  httpOptions: { timeout: 45_000 },
 });
 
 const responseJsonSchema = z.toJSONSchema(ReviewSchema);
 
-export async function askGemini(text) {
-  const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+export async function askGemini(text, model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite') {
   const response = await ai.models.generateContent({
     model,
     contents: `<agreement>\n${text}\n</agreement>`,
@@ -53,6 +52,7 @@ export async function askGemini(text) {
       `Gemini reply failed validation at ${issuePath}: ${firstIssue?.message ?? 'invalid shape'}`,
     );
     error.usage = usage;
+    error.zodIssues = parsed.error.issues;
     throw error;
   }
 

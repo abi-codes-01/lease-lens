@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { readPdf } from '../lib/readPdf.js';
-import { reviewAgreement, AiUnavailableError } from '../lib/reviewAgreement.js';
+import { reviewAgreement, AiUnavailableError, AiConfigError } from '../lib/reviewAgreement.js';
 import { verifyQuotes } from '../lib/verifyQuotes.js';
 import { costInr } from '../lib/cost.js';
 import { isDailyCapReached, recordSpendInr } from '../lib/budget.js';
@@ -58,17 +58,19 @@ reviewRouter.post(
     const startedAt = Date.now();
     let review;
     let usage;
+    let model;
     try {
-      ({ review, usage } = await reviewAgreement(text));
+      ({ review, usage, model } = await reviewAgreement(text));
     } catch (error) {
-      if (error instanceof AiUnavailableError) {
+      if (error instanceof AiConfigError || error instanceof AiUnavailableError) {
         recordSpendInr(costInr(error.usage));
-        return res.status(503).json({ error: error.message });
+        const status = Number.isInteger(error?.status) ? error.status : 500;
+        return res.status(status).json({ error: error.message });
       }
       throw error;
     }
 
-    const cost = costInr(usage);
+    const cost = costInr(usage, model);
     recordSpendInr(cost);
 
     const verifiedFlags = verifyQuotes(review.flags, text);
