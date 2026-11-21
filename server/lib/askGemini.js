@@ -3,14 +3,17 @@ import { z } from 'zod';
 import { reviewRules } from './reviewRules.js';
 import { ReviewSchema } from './reviewSchema.js';
 
+const REQUEST_TIMEOUT_MS = 25_000;
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: { timeout: 45_000 },
+  httpOptions: { timeout: REQUEST_TIMEOUT_MS },
 });
 
 const responseJsonSchema = z.toJSONSchema(ReviewSchema);
 
-export async function askGemini(text, model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite') {
+export async function askGemini(text, model = process.env.GEMINI_MODEL || DEFAULT_MODEL) {
   const response = await ai.models.generateContent({
     model,
     contents: `<agreement>\n${text}\n</agreement>`,
@@ -19,6 +22,7 @@ export async function askGemini(text, model = process.env.GEMINI_MODEL || 'gemin
       maxOutputTokens: 3000,
       responseMimeType: 'application/json',
       responseJsonSchema,
+      httpOptions: { timeout: REQUEST_TIMEOUT_MS },
     },
   });
 

@@ -4,6 +4,41 @@ import { reviewAgreement, AiUnavailableError, AiConfigError } from './reviewAgre
 import { costInr } from './cost.js';
 
 describe('reviewAgreement', () => {
+  it('defaults to gemini-3.5-flash-lite and falls back to gemini-3.8-flash on 504 DEADLINE_EXCEEDED', async () => {
+    const previousModel = process.env.GEMINI_MODEL;
+    delete process.env.GEMINI_MODEL;
+    const modelsCalled = [];
+    const waits = [];
+
+    try {
+      const result = await reviewAgreement('sample agreement', {
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+        ask: async (_text, model) => {
+          modelsCalled.push(model);
+          if (modelsCalled.length === 1) {
+            const err = new Error('Gateway timeout: DEADLINE_EXCEEDED');
+            err.status = 504;
+            throw err;
+          }
+          return {
+            review: { keyTerms: { monthlyRent: 22000, deposit: 100000, lockInMonths: 6, noticeDays: 30 }, flags: [] },
+            usage: { input_tokens: 140, output_tokens: 45 },
+          };
+        },
+      });
+
+      assert.deepEqual(modelsCalled, ['gemini-3.5-flash-lite', 'gemini-3.8-flash']);
+      assert.deepEqual(waits, [2_500]);
+      assert.equal(result.model, 'gemini-3.8-flash');
+    } finally {
+      if (previousModel !== undefined) {
+        process.env.GEMINI_MODEL = previousModel;
+      }
+    }
+  });
+
   it('waits 2500ms and switches from gemini-3.8-flash to gemini-3.5-flash-lite on 503', async () => {
     const modelsCalled = [];
     const waits = [];
@@ -34,32 +69,35 @@ describe('reviewAgreement', () => {
     assert.equal(result.model, 'gemini-3.5-flash-lite');
   });
 
-  it('waits 2500ms and falls back to gemini-3.5-flash-lite on AbortError / timeout', async () => {
-    const modelsCalled = [];
-    const waits = [];
+  it('waits 2500ms and falls back on 502 and AbortError / timeout', async () => {
+    for (const firstError of [
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError' }),
+      Object.assign(new Error('Bad Gateway'), { status: 502 }),
+    ]) {
+      const modelsCalled = [];
+      const waits = [];
 
-    const result = await reviewAgreement('sample agreement', {
-      primaryModel: 'gemini-3.8-flash',
-      wait: async (ms) => {
-        waits.push(ms);
-      },
-      ask: async (_text, model) => {
-        modelsCalled.push(model);
-        if (modelsCalled.length === 1) {
-          const err = new Error('The operation was aborted due to timeout');
-          err.name = 'AbortError';
-          throw err;
-        }
-        return {
-          review: { keyTerms: { monthlyRent: 25000, deposit: 125000, lockInMonths: 11, noticeDays: 60 }, flags: [] },
-          usage: { input_tokens: 150, output_tokens: 50 },
-        };
-      },
-    });
+      const result = await reviewAgreement('sample agreement', {
+        primaryModel: 'gemini-3.8-flash',
+        wait: async (ms) => {
+          waits.push(ms);
+        },
+        ask: async (_text, model) => {
+          modelsCalled.push(model);
+          if (modelsCalled.length === 1) {
+            throw firstError;
+          }
+          return {
+            review: { keyTerms: { monthlyRent: 25000, deposit: 125000, lockInMonths: 11, noticeDays: 60 }, flags: [] },
+            usage: { input_tokens: 150, output_tokens: 50 },
+          };
+        },
+      });
 
-    assert.deepEqual(modelsCalled, ['gemini-3.8-flash', 'gemini-3.5-flash-lite']);
-    assert.deepEqual(waits, [2_500]);
-    assert.equal(result.model, 'gemini-3.5-flash-lite');
+      assert.deepEqual(modelsCalled, ['gemini-3.8-flash', 'gemini-3.5-flash-lite']);
+      assert.deepEqual(waits, [2_500]);
+      assert.equal(result.model, 'gemini-3.5-flash-lite');
+    }
   });
 
   it('switches from gemini-3.5-flash-lite to gemini-3.8-flash on 429 and throws 503 if both fail', async () => {

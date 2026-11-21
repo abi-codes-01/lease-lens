@@ -1,10 +1,11 @@
 import { askGemini } from './askGemini.js';
 
 const MAX_ATTEMPTS = 2;
-const BUSY_RETRY_DELAY_MS = 2_500;
-const PRIMARY_FALLBACK_SOURCE = 'gemini-3.8-flash';
-const LITE_MODEL = 'gemini-3.5-flash-lite';
+const RETRY_DELAY_MS = 2_500;
+const DEFAULT_PRIMARY_MODEL = 'gemini-3.5-flash-lite';
+const ALTERNATE_FLASH_MODEL = 'gemini-3.8-flash';
 const CONFIG_ERROR_STATUSES = new Set([400, 401, 403, 404]);
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 export class AiUnavailableError extends Error {
   constructor(usage) {
@@ -38,6 +39,9 @@ function extractErrorStatus(error) {
   if (codeMatch) {
     return Number(codeMatch[1]);
   }
+  if (message.includes('DEADLINE_EXCEEDED')) {
+    return 504;
+  }
   if (message.includes('UNAVAILABLE')) {
     return 503;
   }
@@ -47,22 +51,14 @@ function extractErrorStatus(error) {
   return null;
 }
 
-function isTimeoutError(error) {
-  return (
-    error?.name === 'AbortError' ||
-    error?.cause?.name === 'AbortError' ||
-    /aborted|timeout/i.test(String(error?.message ?? ''))
-  );
-}
-
-function isBusyError(error) {
+function isRetryableError(error) {
   const status = extractErrorStatus(error);
   const message = String(error?.message ?? '');
   return (
-    status === 503 ||
-    status === 429 ||
-    message.includes('UNAVAILABLE') ||
-    message.includes('RESOURCE_EXHAUSTED')
+    (status !== null && RETRYABLE_STATUSES.has(status)) ||
+    error?.name === 'AbortError' ||
+    error?.cause?.name === 'AbortError' ||
+    /aborted|timeout|UNAVAILABLE|RESOURCE_EXHAUSTED|DEADLINE_EXCEEDED/i.test(message)
   );
 }
 
@@ -82,7 +78,7 @@ function isConfigError(error) {
 }
 
 function getAlternateModel(primaryModel) {
-  return primaryModel === PRIMARY_FALLBACK_SOURCE ? LITE_MODEL : PRIMARY_FALLBACK_SOURCE;
+  return primaryModel === ALTERNATE_FLASH_MODEL ? DEFAULT_PRIMARY_MODEL : ALTERNATE_FLASH_MODEL;
 }
 
 function formatAttemptError(error, model) {
@@ -101,7 +97,7 @@ function formatAttemptError(error, model) {
 
 export async function reviewAgreement(
   text,
-  { ask = askGemini, wait = sleep, primaryModel = process.env.GEMINI_MODEL || LITE_MODEL } = {},
+  { ask = askGemini, wait = sleep, primaryModel = process.env.GEMINI_MODEL || DEFAULT_PRIMARY_MODEL } = {},
 ) {
   const totalUsage = { input_tokens: 0, output_tokens: 0 };
   let currentModel = primaryModel;
@@ -126,12 +122,12 @@ export async function reviewAgreement(
         throw new AiConfigError(totalUsage);
       }
 
-      if (attempt < MAX_ATTEMPTS && (isBusyError(error) || isTimeoutError(error))) {
-        const fallbackModel = isTimeoutError(error) ? LITE_MODEL : getAlternateModel(primaryModel);
+      if (attempt < MAX_ATTEMPTS && isRetryableError(error)) {
+        const fallbackModel = getAlternateModel(primaryModel);
         console.log(
-          `[AI] retrying in ${BUSY_RETRY_DELAY_MS}ms with fallback model ${fallbackModel}`,
+          `[AI] retrying in ${RETRY_DELAY_MS}ms with fallback model ${fallbackModel}`,
         );
-        await wait(BUSY_RETRY_DELAY_MS);
+        await wait(RETRY_DELAY_MS);
         currentModel = fallbackModel;
       }
     }

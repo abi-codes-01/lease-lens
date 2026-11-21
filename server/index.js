@@ -10,8 +10,12 @@ app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.CLIENT_ORIGIN }));
 app.use(express.json());
 
+app.get('/', (_req, res) => {
+  res.json({ ok: true, service: 'lease-lens-api' });
+});
+
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, service: 'lease-lens-api' });
 });
 
 app.use(reviewRouter);
@@ -22,6 +26,10 @@ app.use((_req, res) => {
 
 app.use(errorHandler);
 
-app.listen(port, () => {
-  console.log(`[Server] listening on http://localhost:${port}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(port, () => {
+    console.log(`[Server] listening on http://localhost:${port}`);
+  });
+}
+
+export default app;
